@@ -1,0 +1,204 @@
+gomoku:   procedure;
+
+/*        Control procedure for playing Go or Go-Moku from an ARDS.  */
+/*                  Saltzer, February, 1971                           */
+
+/*        Converted to Version II PL/I and modified to stay within the Multics Virtual screen by Paul Green.
+                20 January 1973 (my birthday).              */
+
+
+declare
+          bshft(17) fixed binary        initial(-8,5,-4,2,-2,1,-1,1,0,-1,1,-1,2,-2,4,-5,8),
+          bdisp(17) fixed binary        initial(-2,18,-28,36,-40,44,-46,48,-50,50,-48,46,-44,40,-36,28,-18),
+          bwidth    fixed binary        initial(900),
+          char      fixed binary,
+          ct1       fixed binary,
+          csft(17)  fixed binary        initial(9,5,4,2,2,1,1,1,0,-1,-1,-1,-2,-2,-4,-5,-9),
+          gdisp_    entry(),
+          geqs_     entry(fixed binary, fixed binary, fixed binary),
+          geras_    entry(),
+          ginit_    entry(),
+          gomoku_init         entry(),
+          gomoku_move         entry(fixed binary, fixed binary, fixed binary, fixed binary, bit(1), bit(1), bit(1), bit
+1)),
+          grmv_     entry(),
+          gsft_     entry(fixed binary, fixed binary, fixed binary),
+          gsps_     entry(fixed binary, fixed binary, fixed binary),
+          gtxt_     entry(char(*)),
+          gvec_     entry(fixed bin, fixed bin, fixed bin),
+          hisi      fixed binary,
+          hisj      fixed binary,
+          i         fixed binary,
+          ifound    bit(1),
+          ioa_      entry options(variable),
+          ioa_$ioa_stream     entry options(variable),
+          ios_$read_ptr       entry(pointer, fixed binary, fixed binary),
+          jfound    bit(1),
+          ldel      fixed binary        initial(50),
+          legal     bit(1),
+          lth       fixed binary,
+          moved     bit(1),
+          ouri      fixed binary,
+          ourj      fixed binary,
+          poff      character(1)        initial(""),       /* octal code 025 */
+          pon       character(1)        initial(""),       /* octal code 006 */
+          program_interrupt   condition,
+          read_list_          entry options(variable),
+          reply_possible      bit(1)    initial("1"b),
+          startleft fixed binary        initial(-512),
+          str       character(20),
+          startup   fixed binary        initial(512),       /* changed from 725 to 512 by PG */
+          textstart fixed binary        initial(-300),
+          trace     bit(1)    initial("0"b),
+          type      fixed binary,
+          x         fixed binary,
+          xc        fixed binary,
+          y         fixed binary,
+          yc        fixed binary,
+          z         fixed binary;
+
+/*        Set up display of the playing board.  */
+
+          call ginit_;
+          call grmv_;
+          call gsps_(startleft, startup, 0);                /*  Get to upper left corner.  */
+
+/*        Letters across top of board.  */
+
+          do i = 1 to 19;
+               call gsft_(ldel,0,0);                        /*  Move to next letter.  */
+               call gtxt_(substr("abcdefghjklmnopqrst",i,1));         /*  Insert it.  */
+               end;
+
+/*        Now construct board, horizontal lines first.  */
+
+
+          z = -bwidth;
+          do i = 1 to 19;
+               call gsft_(0,-ldel,0);             /*  Move to next line.  */
+               call gvec_(z,0,0);                           /*  draw a line.  */
+               z = -z;                                      /*  Reverse direction of next line.  */
+               end;
+
+          z = bwidth;
+          do i = 1 to 19;
+               call gvec_(0,z,0);                           /*  Draw line.  */
+               call gsft_(ldel,0,0);              /*  next position.  */
+               z = -z;                                                /*  Reverse.  */
+               end;
+
+/*        Now put numbers down left side.  */
+
+          call gsft_(-2*ldel-bwidth,0,0);                             /*  Find left side.  */
+          call gsft_(0,5,0);                      /*  Center letter.  */
+          do i = 1 to 19;
+               call gtxt_(substr(" 1 2 3 4 5 6 7 8 910111213141516171819", 2*i-1,2));
+               call gsft_(0,-ldel,0);                       /*  Move down to next number.  */
+               end;
+
+/*        Now prepare for text typing.  */
+
+          call display_board;                               /*  Post the initialized board on screen.  */
+          on condition (program_interrupt) call display_board;        /*  to allow redisplay if needed.  */
+          call ioa_$ioa_stream("graphic_output","The first move is yours. . .");          /*  Initial message, not redi
+played.  */
+
+/*        Initialize the playing program, and start the game.  */
+
+          call gomoku_init;
+          do while (reply_possible);                        /*  Play game.  */
+
+               call ios_$read_ptr(addr(str),20,lth);
+               ifound = "0"b;                               /*  Begin scan of typed moved.  */
+               jfound = "0"b;
+               do i = 1 to lth-1;
+                    char = index("123456789 abcdefghjklmnopqrst", substr(str,i,1));       /*  Identify character.  */
+                    if char = 0 then go to err;
+                    if char = 10 then do;                             /*  Blank, do nothing.  */
+                                    end;
+                    else if char > 10 then do;              /*  Letter, convert to i-coordinate.  */
+                         if ifound then go to err;          /*  Only allow one letter.  */
+                         ifound = "1"b;
+                         hisi = char - 10;
+                         end;
+                    else do;                                /*  Must be a digit.  */
+                         if jfound then go to err;
+                         jfound = "1"b;
+                         if char = 1 then do;     /*  Is there a second digit?  */
+                              ct1 = index("0123456789",substr(str,i+1,1));
+                              if ct1 > 0 then do;
+                                   i = i + 1;
+                                   char = ct1 + 9;
+                                   end;
+                              end;
+                         hisj = char;
+                         end;
+                    end;
+               if (^ifound) | (^jfound) then do;
+err:                call ioa_("Unrecognizable move: ^a", substr(str,1,lth-1));
+                    end;
+                    else do;
+                              call gomoku_move(hisi,hisj,ouri,ourj,legal,moved,reply_possible,trace);
+                              if legal then call display_white(hisi, hisj);     /*  Display his move.  */
+                                       else call ioa_("Illegal move");
+                              if moved then call display_black(ouri, ourj);     /*  Display ours.  */
+                    end;
+
+               end;                                         /*  End of main move loop.  */
+
+          if moved then call ioa_("^aI win!", pon);
+                    else call ioa_("^aYou win!", pon);
+          return;
+
+/*        Internal procedure to erase and post current board position.  */
+
+display_board:      procedure;
+
+          call gsps_(0,textstart,0);                        /*  Make sure that we end up in right place.  */
+          call geras_;
+          call gdisp_;
+          call ioa_$ioa_stream("graphic_output","$^a", poff);        /* Exit graphic mode at last graphic position, wi
+h printer off.  */
+          return;
+
+          end;
+
+/*        Routines to add pieces to the board.  */
+
+display_white:      procedure(x,y);
+
+declare   (x,y) fixed binary;
+          xc = x*ldel + startleft ;
+          yc = startup - y*ldel;
+          call gsps_(xc,yc,0);
+          call gsft_(0,25,0);
+          do i = 1 to 17;
+               call gvec_(csft(i),-3,0);
+               end;
+          do i = 17 to 1 by -1;
+               call gvec_(csft(i),+3,0);
+               end;
+          call gdisp_;
+          return;
+
+          end;
+
+display_black:      procedure(x,y);
+
+declare (x,y) fixed binary;
+          xc = x*ldel + startleft;
+          yc = startup - y*ldel;
+          call gsps_(xc,yc,0);
+          call gsft_(1,25,0);
+          do i = 1 to 17;
+               call gvec_(bdisp(i),0,0);
+               call gsft_(bshft(i),-3,0);
+               end;
+          call gvec_(2,0,0);
+          call gdisp_;
+          return;
+
+          end;
+
+
+          end;

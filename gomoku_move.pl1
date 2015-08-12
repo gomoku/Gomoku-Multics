@@ -1,0 +1,187 @@
+/*        Procedure to play go-moku.  */
+/*        (Simple-minded algorithm.  J. H. Saltzer, February, 1971.)  */
+
+gomoku_init:        procedure;
+
+declare
+          black     fixed binary        initial(-1),
+          board(0:20,0:20) fixed bin    internal static,
+          bsize     fixed binary        initial(19),
+          c         fixed binary,
+          case      fixed binary,
+          ch        fixed binary,
+          clsval(10) fixed binary       initial(1,25,75,250,10000,0,0,0,0,0),
+          deli      fixed binary,
+          delj      fixed binary,
+          delta     fixed binary,
+          edge      fixed binary        initial(2),
+          empty     fixed binary        initial(0),
+          hisi      fixed binary,
+          hisj      fixed binary,
+          idel(4)   fixed binary        initial(0,1,1,1),
+          ih        fixed binary,
+          ioa_      entry options(variable),
+          iv        fixed binary,
+          jdel(4)   fixed binary        initial(1,0,1,-1),
+          kdist     fixed binary,
+          lasti     fixed binary        internal static initial(10),
+          lastj     fixed binary        internal static initial(10),
+          legal     bit(1),
+          nh        float binary,
+          maxval    fixed binary,
+          moved     bit(1),
+          myi       fixed binary,
+          myj       fixed binary,
+          nrocks    fixed binary,
+          openness  fixed binary,
+          opnval(10) fixed binary       initial(1,75,250,3000,10000,0,0,0,0,0),
+          osc       fixed binary,
+          ti        fixed binary,
+          tj        fixed binary,
+          trace     bit(1),
+          repliable bit(1),
+          temp      fixed binary,
+          type      fixed binary,
+          val       fixed binary,
+          value     fixed binary,
+          white     fixed binary        initial(+1),
+          won        bit(1);
+
+/*        Entry to initialize the board.  */
+
+          do iv = 1 to bsize;
+            do ih = 1 to bsize;
+              board(iv,ih) = empty;
+              end;
+            board(iv,0), board(iv,bsize+1) = edge;
+            end;
+          do ih = 0 to bsize+1;
+            board(0,ih),board(bsize+1,ih) = edge;
+            end;
+          return;
+
+gomoku_move:        entry(hisi,hisj,myi,myj,legal,moved,repliable,trace);
+
+/*        First, check his move for legality.  */
+
+          if board(hisi,hisj) = empty then do;
+                                            legal = "1"b;
+                                            board(hisi,hisj) = white;
+                                            end;
+                                  else do;
+                                            legal = "0"b;
+                                            moved = "0"b;
+                                            repliable = "1"b;
+                                            return;
+                                            end;
+
+/*        See if his move was a winner.  */
+
+          call ckwin(hisi,hisj);
+          if won then do;
+                              moved = "0"b;
+                              repliable = "0"b;
+                              return;
+                              end;
+/*        Find best reply.  */
+
+          maxval = 0;
+          myi = 0;
+          myj = 0;
+          do iv = max(1,min(hisi-5,lasti-4)) to min(bsize,max(hisi+5,lasti+4));
+               do ih = max(1,min(hisj-5,lastj-4)) to min(bsize,max(hisj+5,lastj+4));
+                    if board(iv,ih) = empty then do;
+                         value = move_val(white) + move_val(black)*1.2e0;
+                         if value > maxval then do;
+                              maxval = value;
+                              myi = iv;
+                              myj = ih;
+                              end;
+                         if trace then call ioa_("^d,^d,^d", ih,iv,value);
+                         end;
+                    end;
+               end;
+          board(myi,myj) = black;
+          lasti = myi;
+          lastj = myj;
+          moved = "1"b;
+
+/*        See if this move is a winner.  */
+
+          call ckwin(myi,myj);
+          repliable = ^won;
+          return;
+
+/*        Internal procedure to test for a winning move.  */
+
+ckwin:    procedure(ini,inj);
+
+declare   (ini,inj) fixed binary;
+
+          type = board(ini,inj);
+          do case = 1 to 4;
+               c = 1;
+               do osc = +1,-1;
+                 do delta = 1 to 4 while (board(ini+osc*idel(case)*delta,
+                                                inj+osc*jdel(case)*delta) = type);
+                    c = c + 1;
+                    end;
+                 end;
+               if c = 5 then do;
+                              won = "1"b;
+                              return;
+                              end;
+               end;
+          won = "0"b;
+          return;
+          end;
+
+
+
+/*        Internal procedure to evaluate a potential move.  */
+
+move_val: procedure(typ) returns(fixed binary);
+
+declare   typ fixed binary;
+
+          val = 0;
+          do case = 1 to 4;
+               kdist = 1;
+               openness = 2;
+               nrocks = 1;
+               nh = 1.0e0;
+               do osc = +1,-1;
+                    ti = iv;
+                    tj = ih;
+                    deli = osc*idel(case);
+                    delj = osc*jdel(case);
+                    ch = 0;
+                    do delta = 1 to 4;
+                         ti = ti + deli;
+                         tj = tj + delj;
+                         temp = board(ti,tj);
+                         if temp = edge then go to side;
+                         if temp = -typ then go to side;
+                         if ch < 2 then if temp = typ then do;
+                              nrocks = nrocks + 1;
+                              if ch > 0 then nh = nh - 0.25e0;
+                              ch = 0;
+                              end;
+                         else do;
+                              ch = ch + 1;
+                              end;
+                         end;
+                         if board(ti+deli, tj+delj) ^= empty then if ch = 0 then openness = 1;
+                         if "0"b then do;
+                              side:  if ch = 0 then openness = 1;
+                              end;
+                    kdist = kdist + delta - 1;
+                    end;
+               if kdist >= 5 then
+                              if openness = 2 then val = val + opnval(nrocks)*nh;
+                                              else val = val + clsval(nrocks)*nh;
+               end;
+          return (val);
+
+          end;
+          end;
